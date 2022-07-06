@@ -33,16 +33,19 @@ func startProfiling() {
 	if err != nil {
 		panic(err)
 	}
-	pprof.StartCPUProfile(f)
+	err = pprof.StartCPUProfile(f)
+	if err != nil {
+		panic(err)
+	}
 	defer pprof.StopCPUProfile()
 	c := make(chan os.Signal, 2)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM) // subscribe to system signals
 	onKill := func(c chan os.Signal) {
 		select {
 		case <-c:
+			defer os.Exit(0)
 			defer f.Close()
 			defer pprof.StopCPUProfile()
-			defer os.Exit(0)
 		}
 	}
 	// try to handle os interrupt(signal terminated)
@@ -84,7 +87,9 @@ func SearchLog(regex *regexp.Regexp, dir string) error {
 			}
 			resultChannel := make(chan resultOrError, 1)
 			resultChannels = append(resultChannels, channelOfRepo{resultChannel, f.Name()})
-			go searchLogInRepo(regex, repo, resultChannel)
+			go func(regex *regexp.Regexp, repo *git.Repository, resultChannel chan resultOrError) {
+				resultChannel <- searchLogInRepo(regex, repo)
+			}(regex, repo, resultChannel)
 		}
 	}
 	fmt.Println("All goroutines got started")
@@ -110,12 +115,11 @@ func (e stopIterError) Error() string {
 	return "stop"
 }
 
-func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, resultChannel chan resultOrError) {
+func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository) resultOrError {
 	options := git.LogOptions{Order: git.LogOrderCommitterTime}
 	cIter, err := repo.Log(&options)
 	if err != nil {
-		resultChannel <- resultOrError{nil, err}
-		return
+		return resultOrError{nil, err}
 	}
 	var foundCommits []*object.Commit
 
@@ -145,11 +149,9 @@ func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, resultChannel c
 	_, ok := err.(stopIterError)
 	if ok || err == nil {
 		// everything is fine, return found commits
-		resultChannel <- resultOrError{foundCommits, nil}
-		return
+		return resultOrError{foundCommits, nil}
 	}
-	resultChannel <- resultOrError{nil, err}
-	return
+	return resultOrError{nil, err}
 }
 
 func checkDiff(regex *regexp.Regexp, from *object.Commit, to *object.Commit,
