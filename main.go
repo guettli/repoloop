@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -17,7 +17,7 @@ const maxCommits = 100
 var minDate = time.Now().AddDate(0, -18, 0)
 
 type resultOrError struct {
-	commits  []*object.Commit
+	commit   object.Commit
 	repoName string
 	err      error
 }
@@ -46,7 +46,7 @@ func SearchLog(regex *regexp.Regexp, dir string) error {
 		return err
 	}
 	resultChannel := make(chan resultOrError)
-	numGoroutines := 0
+	wg := sync.WaitGroup{}
 	for _, f := range files {
 		if f.IsDir() {
 			path := filepath.Join(dir, f.Name())
@@ -55,26 +55,39 @@ func SearchLog(regex *regexp.Regexp, dir string) error {
 				fmt.Printf("%s %v\n", f.Name(), err)
 				continue
 			}
+			wg.Add(1)
 			go func(regex *regexp.Regexp, repo *git.Repository, resultChannel chan resultOrError, repoName string) {
-				resultChannel <- searchLogInRepo(regex, repo, repoName)
+				defer wg.Done()
+				_, err := searchLogInRepo(regex, repo, repoName, resultChannel)
+				if err != nil {
+					panic(err) // todo: create channel for errors
+				}
+				fmt.Printf("done with %s\n", repoName)
 			}(regex, repo, resultChannel, f.Name())
-			numGoroutines++
 		}
 	}
-	resultsCollected := 0
-	for result := range resultChannel {
-		resultsCollected++
-		if result.err != nil {
-			return err
-		}
-		for _, commit := range result.commits {
-			printCommit(commit, result.repoName)
-		}
-		if resultsCollected == numGoroutines {
-			break
+	return readResults(&wg, resultChannel)
+}
+
+func readResults(wg *sync.WaitGroup, resultChannel chan resultOrError) error {
+	wgChan := make(chan any)
+	go func() {
+		wg.Wait()
+		close(wgChan)
+	}()
+	for {
+		select {
+		case result := <-resultChannel:
+			if result.err != nil {
+				return result.err
+			}
+			printCommit(result.commit, result.repoName)
+		case <-wgChan:
+			// all goroutines are done
+			close(resultChannel)
+			return nil
 		}
 	}
-	return nil
 }
 
 type stopIterError struct{}
@@ -83,16 +96,15 @@ func (e stopIterError) Error() string {
 	return "stop"
 }
 
-func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, repoName string) resultOrError {
+func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, repoName string,
+	resultChannel chan resultOrError) (foundCommits int, err error) {
 	options := git.LogOptions{Order: git.LogOrderCommitterTime}
 	cIter, err := repo.Log(&options)
 	if err != nil {
-		return resultOrError{nil, repoName, err}
+		return foundCommits, err
 	}
-	var foundCommits []*object.Commit
 
 	err = cIter.ForEach(func(commit *object.Commit) error {
-		//fmt.Printf("%v len(foundCommits): %d\n", commit.Author.When, len(foundCommits))
 		switch {
 		case len(commit.ParentHashes) == 0:
 			return nil
@@ -101,11 +113,13 @@ func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, repoName string
 			if err != nil {
 				return err
 			}
-			foundCommits, err = checkDiff(regex, parentCommit, commit, foundCommits)
+			foundCommitsSub, err := checkDiff(regex, parentCommit, commit, repoName, resultChannel)
 			if err != nil {
 				return err
 			}
-			if len(foundCommits) >= maxCommits {
+			foundCommits += foundCommitsSub
+
+			if foundCommits >= maxCommits {
 				return stopIterError{}
 			}
 			if commit.Author.When.Before(minDate) {
@@ -117,48 +131,49 @@ func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, repoName string
 	_, ok := err.(stopIterError)
 	if ok || err == nil {
 		// everything is fine, return found commits
-		return resultOrError{foundCommits, repoName, nil}
+		return foundCommits, nil
 	}
-	return resultOrError{nil, repoName, err}
+	return foundCommits, err
 }
 
 func checkDiff(regex *regexp.Regexp, from *object.Commit, to *object.Commit,
-	foundCommits []*object.Commit) ([]*object.Commit, error) {
+	repoName string,
+	resultChannel chan resultOrError) (int, error) {
+	foundCommits := 0
 	fromTree, err := from.Tree()
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	toTree, err := to.Tree()
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	changes, err := object.DiffTree(fromTree, toTree)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	for _, change := range changes {
 		patch, err := change.Patch()
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 
-		/*
-			if !regex.MatchString(patch.String()) {
-				continue
-			}
-		*/
-		if !strings.Contains(patch.String(), regex.String()) {
+		if !regex.MatchString(patch.String()) {
 			continue
 		}
-		foundCommits = append(foundCommits, to)
-
+		foundCommits++
+		resultChannel <- resultOrError{
+			commit:   *to,
+			repoName: repoName,
+			err:      nil,
+		}
 		// returning the first match is enough
 		return foundCommits, nil
 	}
 	return foundCommits, nil
 }
 
-func printCommit(commit *object.Commit, repoName string) {
+func printCommit(commit object.Commit, repoName string) {
 
 	// This could fail, since there could be duplicates.
 	// See https://stackoverflow.com/questions/72864903
