@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -51,7 +52,7 @@ func SearchLog(regex *regexp.Regexp, dir string) error {
 			path := filepath.Join(dir, f.Name())
 			repo, err := git.PlainOpen(path)
 			if err != nil {
-				fmt.Printf("%s %v", f.Name(), err)
+				fmt.Printf("%s %v\n", f.Name(), err)
 				continue
 			}
 			go func(regex *regexp.Regexp, repo *git.Repository, resultChannel chan resultOrError, repoName string) {
@@ -60,7 +61,6 @@ func SearchLog(regex *regexp.Regexp, dir string) error {
 			numGoroutines++
 		}
 	}
-	fmt.Println("All goroutines got started")
 	resultsCollected := 0
 	for result := range resultChannel {
 		resultsCollected++
@@ -141,7 +141,13 @@ func checkDiff(regex *regexp.Regexp, from *object.Commit, to *object.Commit,
 		if err != nil {
 			return nil, err
 		}
-		if !regex.MatchString(patch.String()) {
+
+		/*
+			if !regex.MatchString(patch.String()) {
+				continue
+			}
+		*/
+		if !strings.Contains(patch.String(), regex.String()) {
 			continue
 		}
 		foundCommits = append(foundCommits, to)
