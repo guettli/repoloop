@@ -45,7 +45,7 @@ func SearchLog(regex *regexp.Regexp, dir string) error {
 	if err != nil {
 		return err
 	}
-	resultChannel := make(chan resultOrError)
+	resultChannel := make(chan resultOrError, 100) // size of channel does not matter
 	wg := sync.WaitGroup{}
 	for _, f := range files {
 		if f.IsDir() {
@@ -70,10 +70,10 @@ func SearchLog(regex *regexp.Regexp, dir string) error {
 }
 
 func readResults(wg *sync.WaitGroup, resultChannel chan resultOrError) error {
-	wgChan := make(chan any)
+	done := make(chan any)
 	go func() {
 		wg.Wait()
-		close(wgChan)
+		close(done)
 	}()
 	for {
 		select {
@@ -82,7 +82,7 @@ func readResults(wg *sync.WaitGroup, resultChannel chan resultOrError) error {
 				return result.err
 			}
 			printCommit(result.commit, result.repoName)
-		case <-wgChan:
+		case <-done:
 			// all goroutines are done
 			close(resultChannel)
 			return nil
