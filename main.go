@@ -113,11 +113,13 @@ func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, repoName string
 			if err != nil {
 				return err
 			}
-			foundCommitsSub, err := checkDiff(regex, parentCommit, commit, repoName, resultChannel)
+			found, err := checkDiff(regex, parentCommit, commit, repoName, resultChannel)
 			if err != nil {
 				return err
 			}
-			foundCommits += foundCommitsSub
+			if found {
+				foundCommits++
+			}
 
 			if foundCommits >= maxCommits {
 				return stopIterError{}
@@ -128,6 +130,7 @@ func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, repoName string
 		}
 		return nil
 	})
+	cIter.Close()
 	_, ok := err.(stopIterError)
 	if ok || err == nil {
 		// everything is fine, return found commits
@@ -138,39 +141,21 @@ func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, repoName string
 
 func checkDiff(regex *regexp.Regexp, from *object.Commit, to *object.Commit,
 	repoName string,
-	resultChannel chan resultOrError) (int, error) {
-	foundCommits := 0
-	fromTree, err := from.Tree()
+	resultChannel chan resultOrError) (found bool, err error) {
+	patch, err := from.Patch(to)
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-	toTree, err := to.Tree()
-	if err != nil {
-		return 0, err
+	if !regex.MatchString(patch.String()) {
+		return false, nil
 	}
-	changes, err := object.DiffTree(fromTree, toTree)
-	if err != nil {
-		return 0, err
+	resultChannel <- resultOrError{
+		commit:   to,
+		repoName: repoName,
+		err:      nil,
 	}
-	for _, change := range changes {
-		patch, err := change.Patch()
-		if err != nil {
-			return 0, err
-		}
-
-		if !regex.MatchString(patch.String()) {
-			continue
-		}
-		foundCommits++
-		resultChannel <- resultOrError{
-			commit:   to,
-			repoName: repoName,
-			err:      nil,
-		}
-		// returning the first match is enough
-		return foundCommits, nil
-	}
-	return foundCommits, nil
+	// returning the first match is enough
+	return true, nil
 }
 
 func printCommit(commit *object.Commit, repoName string) {
