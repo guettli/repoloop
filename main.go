@@ -142,6 +142,9 @@ func searchLogInRepo(regex *regexp.Regexp, repo *git.Repository, repoName string
 func checkDiff(regex *regexp.Regexp, from *object.Commit, to *object.Commit,
 	repoName string,
 	resultChannel chan resultOrError) (found bool, err error) {
+
+	// todo: maybe there is a way to get the diff without the expensive from.Path(to) ?
+
 	patch, err := from.Patch(to)
 	if err != nil {
 		return false, err
