@@ -17,7 +17,7 @@ const maxCommits = 100
 var minDate = time.Now().AddDate(0, -18, 0)
 
 type resultOrError struct {
-	commit   object.Commit
+	commit   *object.Commit
 	repoName string
 	err      error
 }
@@ -163,7 +163,7 @@ func checkDiff(regex *regexp.Regexp, from *object.Commit, to *object.Commit,
 		}
 		foundCommits++
 		resultChannel <- resultOrError{
-			commit:   *to,
+			commit:   to,
 			repoName: repoName,
 			err:      nil,
 		}
@@ -173,7 +173,7 @@ func checkDiff(regex *regexp.Regexp, from *object.Commit, to *object.Commit,
 	return foundCommits, nil
 }
 
-func printCommit(commit object.Commit, repoName string) {
+func printCommit(commit *object.Commit, repoName string) {
 
 	// This could fail, since there could be duplicates.
 	// See https://stackoverflow.com/questions/72864903

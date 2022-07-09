@@ -6,8 +6,8 @@ import (
 )
 
 func BenchmarkSearchLog(b *testing.B) {
-	regex, _ := regexp.Compile("foo")
+	regex, _ := regexp.Compile("fooooooooooooo")
 	for i := 0; i < b.N; i++ {
-		SearchLog(regex, "/home/guettli/projects")
+		SearchLog(regex, "tmp")
 	}
 }

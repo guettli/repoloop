@@ -23,3 +23,33 @@ implementation of git.
 
 ```
 
+# This code is rougly ten times slower than git
+
+This is 10x faster:
+
+```
+for repo in *; do (cd $repo; echo $repo; time git log -G foo --pretty="%ad %h in $repo by %an, %s" --date=iso ) ; done | sort -r
+```
+
+# Benchmarking
+
+```
+> go test -cpuprofile cpu.prof -memprofile mem.prof -bench .
+```
+
+```
+> go tool pprof cpu.prof
+
+>> top
+
+>> web
+```
+
+```
+> go tool pprof mem.prof
+
+>> top
+
+>> web
+```
+
